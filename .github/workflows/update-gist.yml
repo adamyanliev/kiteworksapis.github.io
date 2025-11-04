@@ -1,0 +1,46 @@
+name: Update Gist from Sample Code
+
+on:
+  push:
+    paths:
+      - "sample-code/**"
+
+jobs:
+  update-gist:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update Gist files
+        env:
+          GIST_ID: ac0597d295e64265a04b72646a6c3329
+          GITHUB_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: |
+          echo "Updating Gist $GIST_ID..."
+
+          # Get all changed files under sample-code/
+          CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^sample-code/' || true)
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No changed files in sample-code/"
+            exit 0
+          fi
+
+          # Loop through changed files
+          for FILE in $CHANGED_FILES; do
+            BASENAME=$(basename "$FILE")
+            echo "Updating $BASENAME in Gist..."
+
+            # Prepare JSON for the Gist API
+            CONTENT=$(jq -Rs . < "$FILE")
+            DATA=$(jq -n --arg fn "$BASENAME" --arg ct "$CONTENT" '{files: {($fn): {content: $ct}}}')
+
+            curl -s -X PATCH \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$DATA" \
+              "https://api.github.com/gists/$GIST_ID"
+          done
+
+          echo "✅ Gist updated successfully!"
