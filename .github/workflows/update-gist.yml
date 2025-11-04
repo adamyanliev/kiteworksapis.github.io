@@ -1,73 +1,59 @@
-name: Sync Gist from Sample Code
+name: Mirror sample-code to Gist
 
 on:
   push:
     paths:
-      - "sample-code/**"
+      - 'sample-code/**'       # Trigger on any file changes in sample-code/
+    branches:
+      - main                   # Or adjust your default branch name
+  delete:
+    paths:
+      - 'sample-code/**'
 
 jobs:
-  sync-gist:
+  sync-to-gist:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 2  # fetch previous commit for comparison
 
-      - name: Sync Gist with sample-code folder
+      - name: Set up Python (optional, just for convenience)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install gist CLI
+        run: |
+          sudo npm install -g gist-cli
+
+      - name: Mirror files to Gist
         env:
-          GIST_ID: ac0597d295e64265a04b72646a6c3329
+          GIST_ID: ff4744ea8665a67d797e36f85e5de726
           GITHUB_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
-          echo "🔁 Syncing sample-code folder with Gist $GIST_ID..."
+          # Create a temp directory for Gist content
+          mkdir gist_sync
+          cd sample-code
 
-          # Collect all current files in sample-code/ excluding .DS_Store
-          ALL_FILES=$(find sample-code -type f ! -name '.DS_Store')
+          # Find all files except .DS_Store
+          find . -type f ! -name '.DS_Store' > ../gist_sync/filelist.txt
+          cd ../gist_sync
 
-          if [ -z "$ALL_FILES" ]; then
-            echo "⚠️ No valid files found in sample-code/."
-          fi
+          # Download current Gist content
+          gist download $GIST_ID --token $GITHUB_TOKEN
 
-          # Start building the JSON structure for gist update
-          TMP_JSON=$(mktemp)
-          echo '{"files":{}}' > "$TMP_JSON"
+          # Remove all files in Gist folder to ensure sync
+          find . -type f ! -name 'filelist.txt' -delete
 
-          # Add each valid file to JSON structure
-          for FILE in $ALL_FILES; do
-            RELATIVE_PATH="${FILE#sample-code/}"
-            echo "📦 Including $RELATIVE_PATH"
-            CONTENT=$(jq -Rs . < "$FILE")
-            TMP_JSON=$(jq --arg fn "$RELATIVE_PATH" --arg ct "$(<"$FILE")" \
-              '.files[$fn] = {content: $ct}' <<< "$(cat "$TMP_JSON")")
-          done
+          # Copy updated files preserving relative paths
+          cd ..
+          while IFS= read -r file; do
+            mkdir -p "gist_sync/$(dirname "$file")"
+            cp "sample-code/$file" "gist_sync/$file"
+          done < gist_sync/filelist.txt
 
-          # Fetch current Gist files
-          echo "📥 Fetching current Gist file list..."
-          EXISTING_FILES=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/gists/$GIST_ID" | jq -r '.files | keys[]')
+          cd gist_sync
 
-          # Mark files for deletion if they no longer exist in sample-code/
-          for OLD_FILE in $EXISTING_FILES; do
-            if ! echo "$ALL_FILES" | grep -q "sample-code/$OLD_FILE"; then
-              echo "🗑️  Marking $OLD_FILE for deletion"
-              TMP_JSON=$(jq --arg fn "$OLD_FILE" '.files[$fn] = null' <<< "$(cat "$TMP_JSON")")
-            fi
-          done
-
-          # Apply changes to Gist
-          echo "🚀 Applying updates to Gist..."
-          HTTP_STATUS=$(curl -s -o /tmp/curl_output.txt -w "%{http_code}" \
-            -X PATCH \
-            -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "$(cat "$TMP_JSON")" \
-            "https://api.github.com/gists/$GIST_ID")
-
-          if [ "$HTTP_STATUS" -eq 200 ]; then
-            echo "✅ Gist successfully synced!"
-          else
-            echo "❌ Failed to update Gist (HTTP $HTTP_STATUS)"
-            cat /tmp/curl_output.txt
-            exit 1
-          fi
+          # Re-upload the entire folder to the Gist
+          gist edit $GIST_ID $(find . -type f ! -name 'filelist.txt') --token $GITHUB_TOKEN
