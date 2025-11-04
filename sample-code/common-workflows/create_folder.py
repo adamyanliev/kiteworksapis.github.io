@@ -6,7 +6,7 @@ from get_access_token import KWOAuthClient
 Create a top-level folder in Kiteworks
 """
 """
-Nasko be6e tuk pak
+Nasko be6e tuk otnowo
 """
 def create_folder(base_url, access_token, folder_data):
 
