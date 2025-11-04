@@ -59,8 +59,12 @@ jobs:
                       continue
                   path = os.path.join(root, f)
                   rel = os.path.relpath(path, "sample-code")
+
+                  # Replace / with __ because Gist files can't have folders
+                  gist_name = rel.replace("/", "__")
+
                   with open(path, "r", encoding="utf-8") as fh:
-                      local_files[rel] = {"content": fh.read()}
+                      local_files[gist_name] = {"content": fh.read()}
 
           # --- 3. Determine deletions ---
           files_to_delete = existing_files - set(local_files.keys())
