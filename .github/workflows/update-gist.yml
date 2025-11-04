@@ -1,4 +1,4 @@
-name: Update Gist from Sample Code
+name: Sync Gist from Sample Code
 
 on:
   push:
@@ -6,41 +6,68 @@ on:
       - "sample-code/**"
 
 jobs:
-  update-gist:
+  sync-gist:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # fetch previous commit for comparison
 
-      - name: Update Gist files
+      - name: Sync Gist with sample-code folder
         env:
           GIST_ID: ac0597d295e64265a04b72646a6c3329
           GITHUB_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
-          echo "Updating Gist $GIST_ID..."
+          echo "🔁 Syncing sample-code folder with Gist $GIST_ID..."
 
-          # Get all changed files under sample-code/
-          CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep '^sample-code/' || true)
+          # Collect all current files in sample-code/ excluding .DS_Store
+          ALL_FILES=$(find sample-code -type f ! -name '.DS_Store')
 
-          if [ -z "$CHANGED_FILES" ]; then
-            echo "No changed files in sample-code/"
-            exit 0
+          if [ -z "$ALL_FILES" ]; then
+            echo "⚠️ No valid files found in sample-code/."
           fi
 
-          # Loop through changed files
-          for FILE in $CHANGED_FILES; do
-            BASENAME=$(basename "$FILE")
-            echo "Updating $BASENAME in Gist..."
+          # Start building the JSON structure for gist update
+          TMP_JSON=$(mktemp)
+          echo '{"files":{}}' > "$TMP_JSON"
 
-            # Prepare JSON for the Gist API
+          # Add each valid file to JSON structure
+          for FILE in $ALL_FILES; do
+            RELATIVE_PATH="${FILE#sample-code/}"
+            echo "📦 Including $RELATIVE_PATH"
             CONTENT=$(jq -Rs . < "$FILE")
-            DATA=$(jq -n --arg fn "$BASENAME" --arg ct "$CONTENT" '{files: {($fn): {content: $ct}}}')
-
-            curl -s -X PATCH \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "$DATA" \
-              "https://api.github.com/gists/$GIST_ID"
+            TMP_JSON=$(jq --arg fn "$RELATIVE_PATH" --arg ct "$(<"$FILE")" \
+              '.files[$fn] = {content: $ct}' <<< "$(cat "$TMP_JSON")")
           done
 
-          echo "✅ Gist updated successfully!"
+          # Fetch current Gist files
+          echo "📥 Fetching current Gist file list..."
+          EXISTING_FILES=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/gists/$GIST_ID" | jq -r '.files | keys[]')
+
+          # Mark files for deletion if they no longer exist in sample-code/
+          for OLD_FILE in $EXISTING_FILES; do
+            if ! echo "$ALL_FILES" | grep -q "sample-code/$OLD_FILE"; then
+              echo "🗑️  Marking $OLD_FILE for deletion"
+              TMP_JSON=$(jq --arg fn "$OLD_FILE" '.files[$fn] = null' <<< "$(cat "$TMP_JSON")")
+            fi
+          done
+
+          # Apply changes to Gist
+          echo "🚀 Applying updates to Gist..."
+          HTTP_STATUS=$(curl -s -o /tmp/curl_output.txt -w "%{http_code}" \
+            -X PATCH \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$(cat "$TMP_JSON")" \
+            "https://api.github.com/gists/$GIST_ID")
+
+          if [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "✅ Gist successfully synced!"
+          else
+            echo "❌ Failed to update Gist (HTTP $HTTP_STATUS)"
+            cat /tmp/curl_output.txt
+            exit 1
+          fi
