@@ -3,7 +3,7 @@ name: Mirror sample-code to Gist
 on:
   push:
     branches:
-      - main                   # Or adjust your default branch name
+      - main                   # Or adjust your default branch name aaaa
   delete:
     paths:
       - 'sample-code/**'
