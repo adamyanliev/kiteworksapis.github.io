@@ -24,15 +24,14 @@ jobs:
           python-version: '3.x'
 
       - name: Install dependencies
-        run: |
-          pip install requests
+        run: pip install requests
 
       - name: Mirror sample-code to Gist
         env:
           GIST_ID: ff4744ea8665a67d797e36f85e5de726
           GITHUB_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
-          python3 <<'PYCODE'
+          cat > sync_gist.py <<'PYCODE'
           import os, requests, json
 
           gist_id = os.environ["GIST_ID"]
@@ -42,9 +41,43 @@ jobs:
               "Accept": "application/vnd.github.v3+json"
           }
 
-          # --- 1. Fetch current Gist state ---
           gist_url = f"https://api.github.com/gists/{gist_id}"
+
+          # --- 1. Fetch current Gist state ---
           resp = requests.get(gist_url, headers=headers)
           if resp.status_code != 200:
               print("❌ Failed to fetch Gist:", resp.status_code, resp.text)
               exit(1)
+          gist_data = resp.json()
+          existing_files = set(gist_data["files"].keys())
+
+          # --- 2. Collect local files ---
+          local_files = {}
+          for root, _, filenames in os.walk("sample-code"):
+              for f in filenames:
+                  if f == ".DS_Store":
+                      continue
+                  path = os.path.join(root, f)
+                  rel = os.path.relpath(path, "sample-code")
+                  with open(path, "r", encoding="utf-8") as fh:
+                      local_files[rel] = {"content": fh.read()}
+
+          # --- 3. Determine deletions ---
+          files_to_delete = existing_files - set(local_files.keys())
+          payload_files = local_files.copy()
+          for f in files_to_delete:
+              payload_files[f] = None
+
+          # --- 4. Patch Gist ---
+          data = {"files": payload_files}
+          r = requests.patch(gist_url, headers=headers, data=json.dumps(data))
+          if r.status_code >= 300:
+              print("❌ Failed to update Gist:", r.status_code, r.text)
+              exit(1)
+
+          print(f"✅ Gist {gist_id} synced successfully.")
+          print(f"  → {len(local_files)} files updated/added")
+          print(f"  → {len(files_to_delete)} files deleted")
+          PYCODE
+
+          python3 sync_gist.py
