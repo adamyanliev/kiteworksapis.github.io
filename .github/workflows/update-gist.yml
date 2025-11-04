@@ -2,8 +2,6 @@ name: Mirror sample-code to Gist
 
 on:
   push:
-    paths:
-      - 'sample-code/**'       # Trigger on any file changes in sample-code/
     branches:
       - main                   # Or adjust your default branch name
   delete:
